@@ -755,6 +755,7 @@ class Exporter:
     @try_export
     def export_paddle(self, prefix=colorstr("PaddlePaddle:")):
         """Export YOLO model to PaddlePaddle format."""
+        assert not IS_PYTHON_3_13, "PaddlePaddle export not supported on Python 3.13"
         from ultralytics.utils.export.paddle import torch2paddle
 
         return torch2paddle(self.model, self.im, self.file, self.metadata, prefix)
