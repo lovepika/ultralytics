@@ -336,6 +336,7 @@ class RTDETRDEIMDataset(RTDETRDataset):
 
     def __init__(self, *args, data=None, **kwargs):
         hyp = kwargs["hyp"]
+        self.base_hyp = copy(hyp)
         self.deim_aug_scheduler = resolve_deim_aug_scheduler(hyp)
         self.policy_epochs, self.mixup_epochs, self.copyblend_epochs = self._compute_deim_schedule(hyp)
         self.mosaic_prob = float(hyp.mosaic)
@@ -367,6 +368,34 @@ class RTDETRDEIMDataset(RTDETRDataset):
             mixup_epochs = policy_epochs[:2]
             copyblend_epochs = (policy_epochs[0], policy_epochs[2])
         return policy_epochs, mixup_epochs, copyblend_epochs
+
+    def _build_v8_epoch_hyp(self, epoch: int):
+        """Clone base hparams and apply optional DEIM-style decay for the v8 augmentation branch."""
+        hyp = copy(self.base_hyp)
+        _, _, stop = self.policy_epochs
+        if self.deim_aug_scheduler == "decay":
+            _, mixup_stop = self.mixup_epochs
+            _, copy_paste_stop = self.copyblend_epochs
+            hyp.mosaic = compute_deim_scheduled_prob(self.mosaic_prob, epoch, stop)
+            hyp.mixup = compute_deim_scheduled_prob(self.mixup_prob, epoch, mixup_stop)
+            hyp.copy_paste = compute_deim_scheduled_prob(self.copyblend_prob, epoch, copy_paste_stop)
+            hyp.scale = compute_deim_scheduled_prob(float(self.base_hyp.scale), epoch, stop)
+            if epoch >= stop:
+                # Match DEIM's final no-aug tail by neutralizing all remaining v8 augmentations.
+                hyp.mosaic = 0.0
+                hyp.mixup = 0.0
+                hyp.copy_paste = 0.0
+                hyp.cutmix = 0.0
+                hyp.degrees = 0.0
+                hyp.translate = 0.0
+                hyp.scale = 0.0
+                hyp.shear = 0.0
+                hyp.perspective = 0.0
+                hyp.hsv_h = 0.0
+                hyp.hsv_s = 0.0
+                hyp.hsv_v = 0.0
+                hyp.augmentations = []
+        return hyp
 
     def build_transforms(self, hyp=None):
         """Build DEIM transforms for train and standard formatting for train/val."""
@@ -402,10 +431,12 @@ class RTDETRDEIMDataset(RTDETRDataset):
         return transforms
 
     def set_epoch(self, epoch: int) -> None:
-        """Propagate epoch to transforms and collate_fn for DEIM stage scheduling."""
+        """Propagate epoch to transforms and collate_fn for DEIM/v8 augmentation scheduling."""
         self.epoch = epoch
-        if hasattr(self.transforms, "set_epoch"):
+        if self.rtdetr_augmentations and hasattr(self.transforms, "set_epoch"):
             self.transforms.set_epoch(epoch)
+        elif self.augment and self.deim_aug_scheduler == "decay":
+            self.transforms = self.build_transforms(hyp=self._build_v8_epoch_hyp(epoch))
 
         if self.uses_deim_batch_augments:
             self.collate_fn.set_epoch(epoch)
@@ -522,8 +553,10 @@ class RTDETRDEIMTrainer(RTDETRTrainer):
 
     def train(self, *args, **kwargs):
         # DEIM trainer handles augmentation schedule explicitly.
-        # Keep base trainer's close_mosaic hook disabled only for the DEIM sample-augmentation branch.
-        if self.args.rtdetr_augmentations and self.args.close_mosaic:
+        # Disable the base trainer's hard close_mosaic hook whenever DEIM controls augmentation decay.
+        if self.args.close_mosaic and (
+            self.args.rtdetr_augmentations or resolve_deim_aug_scheduler(self.args) == "decay"
+        ):
             self.args.close_mosaic = 0
         if not self._deim_callback_registered:
             self.add_callback("on_train_epoch_start", self._on_train_epoch_start)
