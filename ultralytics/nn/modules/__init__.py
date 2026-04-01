@@ -29,6 +29,7 @@ from .block import (
     PSA,
     SPP,
     SPPELAN,
+    PPM,
     SPPF,
     A2C2f,
     AConv,

@@ -237,6 +237,44 @@ class SPPF(nn.Module):
         return y + x if getattr(self, "add", False) else y
 
 
+class PPM(nn.Module):
+    """Pyramid Pooling Module."""
+
+    def __init__(self, c1: int, c2: int, k: int = 5, n: int = 3, shortcut: bool = False):
+        """Initialize the PPM layer with given input/output channels and kernel size.
+
+        Args:
+            c1 (int): Input channels.
+            c2 (int): Output channels.
+            k (int): Kernel size.
+            n (int): Number of pooling iterations.
+            shortcut (bool): Whether to use shortcut connection.
+
+        Notes:
+            This module is equivalent to SPP(k=(5, 9, 13)).
+        """
+        super().__init__()
+        c_ = c1 // 2  # hidden channels
+        self.cv1 = Conv(c1, c_, 1, 1)
+        pool_scales = [1, 2, 4]
+        self.ppm = nn.ModuleList()
+        for pool_scale in pool_scales:
+            self.ppm.append(nn.Sequential(nn.AdaptiveAvgPool2d(pool_scale), Conv(c_, c_, 1, 1)))
+        self.cv2 = Conv(c_ * (len(pool_scales) + 1), c2, 1, 1)
+        self.add = shortcut and c1 == c2
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x_ = self.cv1(x)
+        out = [x_]
+        input_shape = x.shape[2:]
+        for stage in self.ppm:
+            y = stage(x_)
+            y = F.interpolate(y, input_shape, mode='nearest')
+            out.append(y)
+        out = self.cv2(torch.cat(out, 1))
+        return out + x if getattr(self, "add", False) else out
+
+
 class C1(nn.Module):
     """CSP Bottleneck with 1 convolution."""
 

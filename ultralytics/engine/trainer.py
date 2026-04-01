@@ -1060,6 +1060,7 @@ class BaseTrainer:
             # pattern = re.compile(r"(?=.*23)(?=.*cv3)|proto\.semseg")
             # pattern = re.compile(r'(?:9|1[0-9]|2[0-3])\.')  # ‘9.’ ~ ‘23.’
             if self.args.pretrained:
+                # pattern = re.compile(r'(?:9|1[0-9]|2[0-3])\.')  # ‘9.’ ~ ‘23.’
                 pattern = re.compile(r'(?:1[0-9]|2[0-3])\.')  # ‘10.’ ~ ‘23.’
             else:
                 pattern = re.compile(r"(?!)")
